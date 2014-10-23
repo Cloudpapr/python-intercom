@@ -18,6 +18,7 @@ __version__ = '0.2.13'
 
 import functools
 import json
+import numbers
 import requests
 import time
 
@@ -57,6 +58,36 @@ class ServiceUnavailableError(IntercomError):
     pass
 
 
+class CustomData(dict):
+    """ A dict that limits keys to strings, and values to real numbers
+    and strings.
+
+    >>> from intercom.company import CustomData
+    >>> data = CustomData()
+    >>> data['a_dict'] = {}
+    Traceback (most recent call last):
+        ...
+    ValueError: custom data only allows string and real number values
+    >>> data[1] = "a string"
+    Traceback (most recent call last):
+        ...
+    ValueError: custom data only allows string keys
+
+    """
+
+    def __setitem__(self, key, value):
+        """ Limits the keys and values. """
+        if not (
+            isinstance(value, numbers.Real) or
+            isinstance(value, basestring)
+        ):
+            raise ValueError(
+                "custom data only allows string and real number values")
+        if not isinstance(key, basestring):
+            raise ValueError("custom data only allows string keys")
+        super(CustomData, self).__setitem__(key, value)
+
+
 def api_call(func_to_decorate):
     """ Decorator for handling AWS credentials. """
     @functools.wraps(func_to_decorate)
@@ -72,15 +103,39 @@ def api_call(func_to_decorate):
 
 
 def raise_errors_on_failure(response):
-    if response.status_code == 404:
+    if response.status_code == 400:
+        raise ServerError("Bad Request – General client error, possibly malformed data.")
+    elif response.status_code == 404:
         raise ResourceNotFound("Not found.")
     elif response.status_code == 401:
         raise AuthenticationError("Invalid API key/username provided.")
+    elif response.status_code == 402:
+        raise ServerError("Payment Required – The API is not available on your current plan.")
+    elif response.status_code == 403:
+        raise ServerError("Forbidden – The request is not allowed.")
+    elif response.status_code == 404:
+        raise ServerError("Not Found – The resource was not found.")
+    elif response.status_code == 405:
+        raise ServerError("Method Not Allowed – The resource does not accept the HTTP method.")
+    elif response.status_code == 406:
+        raise ServerError("Not Acceptable – The resource cannot return the client’s required content type.")
+    elif response.status_code == 408:
+        raise ServerError("Request Timeout – The server would not wait any longer for the client.")
+    elif response.status_code == 409:
+        raise ServerError("Conflict - the client is trying to update with a stale version or data.")
+    elif response.status_code == 415:
+        raise ServerError("Unsupported Media Type - The server doesn’t accept the submitted content-type.")
+    elif response.status_code == 422:
+        raise ServerError("Unprocessable Entity – The data was well-formed but invalid.")
+    elif response.status_code == 429:
+        raise ServerError("Too Many Requests – The client has reached or exceeded a rate limit, or the server is overloaded.")
     elif response.status_code == 500:
         raise ServerError("Server error.")
     elif response.status_code == 502:
         raise BadGatewayError("Bad gateway.")
     elif response.status_code == 503:
+        raise ServiceUnavailableError("Service unavailable.")
+    elif response.status_code == 504:
         raise ServiceUnavailableError("Service unavailable.")
 
 
@@ -91,6 +146,7 @@ class Intercom(object):
     api_key = None
     api_version = 1
     api_endpoint = 'https://api.intercom.io/v' + str(api_version) + '/'
+    api_endpoint = 'https://api.intercom.io/'
     timeout = DEFAULT_TIMEOUT
 
     @classmethod
@@ -121,6 +177,13 @@ class Intercom(object):
         user_dict = Intercom._call(
             method, Intercom.api_endpoint + 'users', params=kwargs)
         return user_dict
+
+    @classmethod
+    def _create_or_update_company(cls, method, **kwargs):
+        """ Used by create_company and update_company. """
+        company_dict = Intercom._call(
+            method, Intercom.api_endpoint + 'companies', params=kwargs)
+        return company_dict
 
     @classmethod
     def get_users(cls, **kwargs):
@@ -158,6 +221,36 @@ class Intercom(object):
             'GET', Intercom.api_endpoint + 'users', params=kwargs)
 
     @classmethod
+    def get_companies(cls, **kwargs):
+        """ Returns a paginated list of all companies in your application on
+        Intercom.
+
+        **Arguments**
+
+        * ``page``: optional - what page of results to fetch (defaults to first page)
+        * ``per_page``: optional - how many results per page (defaults to 50)
+        * ``order``: optional - asc or desc. Return the companies in ascending or descending order. (defaults to desc)
+
+        **Response**
+
+        * ``type``: value is ‘company.list’
+          single User)
+        * ``total_count``: The number of companies for this App
+        * ``companies``: A list of companies
+        * ``pages``: Optional. A pagination object, which may be empty, indicating no further pages to fetch
+
+
+        >>> result = Intercom.get_companies()
+        >>> type(result)
+        <type 'dict'>
+        >>> len(result['companies'])
+        3
+
+        """
+        return Intercom._call(
+            'GET', Intercom.api_endpoint + 'companies', params=kwargs)
+
+    @classmethod
     def get_user(cls, email=None, user_id=None):
         """ Return a dict for the user represented by the specified email
         or user_id.
@@ -172,6 +265,22 @@ class Intercom(object):
         user_dict = Intercom._call(
             'GET', Intercom.api_endpoint + 'users', params=params)
         return user_dict
+
+    @classmethod
+    def get_company(cls, name=None, company_id=None):
+        """ Return a dict for the company represented by the specified name
+        or company_id.
+
+        >>> company = Intercom.get_company(company_id='123')
+        >>> company['name']
+        u'Somebody'
+
+        """
+
+        params = {'name': name, 'company_id': company_id}
+        company_dict = Intercom._call(
+            'GET', Intercom.api_endpoint + 'companies', params=params)
+        return company_dict
 
     @classmethod
     def create_user(cls, **kwargs):
@@ -218,6 +327,32 @@ class Intercom(object):
         return Intercom._create_or_update_user('POST', **kwargs)
 
     @classmethod
+    def create_company(cls, **kwargs):
+        """ Creates a company.
+
+        **Arguments**
+
+        - ``company_id``: The company id you have defined for the company
+        - ``remote_created_at``: optional - The time the company was created by you
+        - ``name``: The name of the company
+        - ``monthly_spend``: How much revenue the company generates for your business
+        - ``plan``: The name of the plan you have associated with the company
+        - ``session_count``: How many sessions the company has recorded
+        - ``custom_attributes``: A hash of key/value pairs containing any other data about 
+            the company you want Intercom to store
+
+
+        >>> company = Intercom.create_company(company_id='123',
+        ... name='My company', custom_data={ 'category': 'Premium'})
+        >>> company['name']
+        u'My company'
+        >>> user['custom_data']['category']
+        u'Premium'
+
+        """
+        return Intercom._create_or_update_company('POST', **kwargs)
+
+    @classmethod
     def update_user(cls, **kwargs):
         """ Update a user with the available parameters.
 
@@ -229,7 +364,21 @@ class Intercom(object):
         u'Guido'
 
         """
-        return Intercom._create_or_update_user('PUT', **kwargs)
+        return Intercom._create_or_update_user('POST', **kwargs)
+
+    @classmethod
+    def update_company(cls, **kwargs):
+        """ Update a company with the available parameters.
+
+        >>> company = Intercom.get_user(company_id='123')
+        >>> company['name']
+        u'My company'
+        >>> company = Intercom.update_user(company_id='123', name='My new company')
+        >>> company['name']
+        u'My new company'
+
+        """
+        return Intercom._create_or_update_company('POST', **kwargs)
 
     @classmethod
     def delete_user(cls, user_id=None, email=None):

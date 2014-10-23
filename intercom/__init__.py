@@ -46,6 +46,7 @@ from .impression import Impression
 from .message_thread import MessageThread
 from .note import Note
 from .user import User
+from .company import Company
 from .tag import Tag
 from .events import Event
 
