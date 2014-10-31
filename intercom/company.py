@@ -34,11 +34,9 @@ class CompanyId(dict):
 class Company(CompanyId):
     """ Object representing http://doc.intercom.io/api/?shell#companies).  """
 
-    #attributes = (
-    #    'type', 'created_at', 'remote_created_at', 'updated_at', 'company_id', 'name',
-    #    'custom_attributes', 'session_count', 'monthly_spend', 'user_count', 'plan')
-
-    attributes = ('company_id', 'name', 'plan', 'remote_created_at', 'monthly_spend', 'custom_attributes')
+    # TODO Add plan parameter
+    # attributes = ('company_id', 'name', 'plan', 'remote_created_at', 'monthly_spend', 'custom_attributes')
+    attributes = ('company_id', 'name', 'remote_created_at', 'monthly_spend', 'custom_attributes')
 
     @classmethod
     def find(cls, company_id=None, name=None):
